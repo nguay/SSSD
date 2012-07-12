@@ -199,7 +199,6 @@ int main(int argc, const char **argv)
     int seed_source = SEED_SOURCE_DP;
     int interact = 0;
 
-    char *uname = NULL;
     char *selinux_user = NULL;
     char *groups = NULL;
     char *domain = NULL;
@@ -237,7 +236,7 @@ int main(int argc, const char **argv)
          _("User UID"), NULL },
         { "gid",   'g', POPT_ARG_INT, &tctx->octx->gid, 0,
          _("User GID"), NULL },
-        { "username", 'n', POPT_ARG_STRING, &uname, 0,
+        { "username", 'n', POPT_ARG_STRING, &tctx->octx->name, 0,
          _("Username"), NULL},
         { "gecos", 'c', POPT_ARG_STRING, &tctx->octx->gecos, 0,
          _("Comment string"), NULL},
@@ -315,7 +314,6 @@ int main(int argc, const char **argv)
             ret = EXIT_FAILURE;
             goto end;
         }
-        uname = tctx->octx->name;
     }
 
     /* check if root */
@@ -340,16 +338,6 @@ int main(int argc, const char **argv)
         DEBUG(SSSDBG_CRIT_FAILURE,
               ("Could not inittialize connection to the confdb\n"));
         goto end;
-    }
-
-    if (seed_source != SEED_SOURCE_LOCAL) {
-        ret = confdb_get_domain(tctx->confdb, "local", &tctx->local);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_OP_FAILURE,
-                  ("Failed to get local domain info from confdb\n"));
-        }
-    } else {
-        tctx->local = tctx->octx->domain;
     }
 
     if (domain) {
