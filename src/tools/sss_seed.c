@@ -329,9 +329,8 @@ int main(int argc, const char **argv)
             ret = EXIT_FAILURE;
             goto end;
         }
+        uname = tctx->octx->name;
     }
-
-    uname = tctx->octx->name;
 
     /* check if root */
     ret = getuid();
