@@ -192,9 +192,10 @@ done:
 
 int main(int argc, const char **argv)
 {
-    int seed_debug = 0xFFF0;
+    int seed_debug = SSSDBG_DEFAULT;
     int interact = 0;
 
+    const char* uname = NULL;
     char *selinux_user = NULL;
     char *groups = NULL;
     char *domain = NULL;
@@ -247,9 +248,9 @@ int main(int argc, const char **argv)
          _("Specify an alternative skeleton directory"), NULL },
         { "selinux-user", 'Z', POPT_ARG_STRING, &selinux_user, 0,
          _("The SELinux user for user's login"), NULL },
-        { "pass-file", 'p', POPT_ARG_STRING, &password_file, 0,
-         _("File from which the password is read "
-           "(password prompt is default)"),NULL },
+        { "password-file", 'p', POPT_ARG_STRING, &password_file, 0,
+         _("File from which user's password is read "
+           "(default is to prompt for password)"),NULL },
         POPT_TABLEEND
     };
     poptContext pc = NULL;
@@ -284,16 +285,28 @@ int main(int argc, const char **argv)
                                           ret, end);
                 }
                 break;
-
             case 'i':
                 DEBUG(SSSDBG_TRACE_INTERNAL, ("Interactive mode slected\n"));
                 interact = 1;
                 break;
         }
     }
-
+PA
     if (ret != -1) {
         BAD_POPT_PARAMS(pc, poptStrerror(ret), ret, end);
+    }
+
+    /* username is standalone argument */
+    uname = poptGetArg(pc);
+    if (uname == NULL) {
+        BAD_POPT_PARAMS(pc, _("Username must be specified\n"), ret, end);
+    }
+
+    tctx->octx->name = talloc_strdup(tctx,uname);
+    if (tctx->octx->name == NULL) {
+        ret = ENOMEM;
+        DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to allocate username\n"));
+        goto end;
     }
 
     /* check if root */
