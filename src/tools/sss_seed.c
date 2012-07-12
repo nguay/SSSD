@@ -468,6 +468,13 @@ int main(int argc, const char **argv)
         domain = talloc_strdup(tctx, tctx->local->name);
     }
 
+    ret = confdb_get_domain(tctx->confdb, domain, &tctx->octx->domain);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, ("Error retrieving domain [%s] from confdb\n",
+                                  domain));
+        goto done;
+    }
+
     ret = sysdb_init_domain_and_sysdb(tctx, tctx->confdb, domain,
                                       "/var/lib/sss/db", &tctx->octx->domain,
                                       &tctx->sysdb);
@@ -600,7 +607,7 @@ int main(int argc, const char **argv)
         DEBUG(SSSDBG_TRACE_INTERNAL, ("User found in cache\n"));
     }
 
-/* initgroups
+/* sysdb_initgroups
 
     ret = sysdb_initgroups(tctx, tctx->sysdb, pc_username, &res);
     if (ret != EOK) {
@@ -632,7 +639,7 @@ int main(int argc, const char **argv)
     }
 
 */
-    /* clean up */
+
 done:
     ret = EXIT_SUCCESS;
 
