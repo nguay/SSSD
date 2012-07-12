@@ -14,9 +14,6 @@
 #include "tools/sss_sync_ops.h"
 #include "confdb/confdb.h"
 
-#define SEED_SOURCE_LOCAL    1
-#define SEED_SOURCE_DP      2
-
 #define PASS_PROMPT 0
 #define PASS_FILE 1
 
@@ -196,7 +193,6 @@ done:
 int main(int argc, const char **argv)
 {
     int seed_debug = 0xFFF0;
-    int seed_source = SEED_SOURCE_DP;
     int interact = 0;
 
     char *selinux_user = NULL;
@@ -231,7 +227,7 @@ int main(int argc, const char **argv)
         POPT_AUTOHELP
         { "debug", '\0', POPT_ARG_INT | POPT_ARGFLAG_DOC_HIDDEN, &seed_debug, 0,
          _("The debug level to run with"), NULL },
-        { "domain", 'D', POPT_ARG_STRING, &domain, 0, _("Domain"), NULL},
+        { "domain", 'D', POPT_ARG_STRING, &domain, 0, _("Domain"), NULL },
         { "uid",   'u', POPT_ARG_INT, &tctx->octx->uid, 0,
          _("User UID"), NULL },
         { "gid",   'g', POPT_ARG_INT, &tctx->octx->gid, 0,
@@ -245,14 +241,15 @@ int main(int argc, const char **argv)
         { "shell", 's', POPT_ARG_STRING, &tctx->octx->shell, 0,
          _("Login Shell"), NULL },
         { "groups", 'G', POPT_ARG_STRING, NULL, 'G', _("Groups"), NULL },
-        { "force", 'f', POPT_ARG_NONE, NULL, 'f',
-         _("force override of domain user info"), NULL },
         { "interactive", 'i', POPT_ARG_NONE, NULL, 'i',
-         _("use interactive mode to enter user data"), NULL },
+         _("Use interactive mode to enter user data"), NULL },
         { "skel", 'k', POPT_ARG_STRING, &tctx->octx->skeldir, 0,
          _("Specify an alternative skeleton directory"), NULL },
         { "selinux-user", 'Z', POPT_ARG_STRING, &selinux_user, 0,
          _("The SELinux user for user's login"), NULL },
+        { "pass-file", 'p', POPT_ARG_STRING, &password_file, 0,
+         _("File from which the password is read "
+           "(password prompt is default)"),NULL },
         POPT_TABLEEND
     };
     poptContext pc = NULL;
@@ -277,7 +274,7 @@ int main(int argc, const char **argv)
         goto end;
     }
 
-    poptSetOtherOptionHelp(pc, "[OPTIONS] usernmae@DOMAIN");
+    poptSetOtherOptionHelp(pc, "[OPTIONS] -D domain username");
     while ((ret = poptGetNextOpt(pc)) > 0) {
         switch (ret) {
             case 'G':
@@ -286,11 +283,6 @@ int main(int argc, const char **argv)
                     BAD_POPT_PARAMS(pc, _("Specify group to add user to\n"),
                                           ret, end);
                 }
-                break;
-
-            case 'f':
-                DEBUG(SSSDBG_TRACE_INTERNAL, ("local seed info forced\n"));
-                seed_source = SEED_SOURCE_LOCAL;
                 break;
 
             case 'i':
@@ -302,18 +294,6 @@ int main(int argc, const char **argv)
 
     if (ret != -1) {
         BAD_POPT_PARAMS(pc, poptStrerror(ret), ret, end);
-    } else {
-        ret = EOK;
-    }
-
-    /* interactive mode to fill in user seed info */
-    if (interact) {
-        ret = get_seed_input(tctx, &groups);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to get seed input.\n"));
-            ret = EXIT_FAILURE;
-            goto end;
-        }
     }
 
     /* check if root */
@@ -324,6 +304,22 @@ int main(int argc, const char **argv)
         ret = EXIT_FAILURE;
         goto end;
     }
+
+    /* getpwnam and initgroups */
+    pc_passwd = getpwnam(tctx->octx->name);
+    if (pc_passwd == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              ("getpwnam failed; user entry not found or allocation error\n"));
+    } else {
+        tctx->octx->name = pc_passwd->pw_name;
+        tctx->octx->gid = pc_passwd->pw_gid;
+
+        ret = initgroups(tctx->octx->name, tctx->octx->gid);
+        if (ret == -1) {
+            DEBUG(SSSDBG_OP_FAILURE, ("initgroups failure\n"));
+        }
+    }
+
 
     /* setup confdb */
     char *confdb_path = talloc_asprintf(tctx, "%s/%s", DB_PATH,
@@ -340,6 +336,7 @@ int main(int argc, const char **argv)
         goto end;
     }
 
+    /* set up domain and sysdb */
     if (domain) {
         DEBUG(SSSDBG_FUNC_DATA, ("Domain provided: [%s]\n", domain));
     } else {
@@ -363,32 +360,36 @@ int main(int argc, const char **argv)
         goto end;
     }
 
-    /* get seed info from domain */
-/*    if (seed_source == SEED_SOURCE_DP) {
-
-        struct sss_domain_info **doms = NULL;
-        struct sss_domain_info *dom = NULL;
-        struct sysdb_ctx *sysdb = NULL;
-        size_t num_domains = 0;
-
-        for (dom = tctx->octx->domain; dom; dom = dom->next) num_domains++;
-
-        doms = talloc_zero_array(state, struct sss_domain_info *, num_domains);
-
-        ret = confdb_get_domains(tctx->confdb, doms);
-        if (ret != EOK || doms == NULL) {
-            DEBUG(SSSDBG_OP_FAILURE, ("Failed to get domains from confdb\n"));
-        }
-
-        dom = doms[0];
-        while(dom) {
-           sysdb = dom->sysdb;
-
-        }
-
+    /* look for user in cache */
+    ret = sysdb_getpwnam(tctx, tctx->sysdb, tctx->octx->name, &res);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              ("Couldn't lookup user (%s) in the cache", tctx->octx->name));
+        ret = EXIT_FAILURE;
+        goto end;
     }
-*/
 
+    if (res->count == 0) {
+        DEBUG(SSSDBG_TRACE_INTERNAL,
+                 ("User (%1$s) wasn't found in the cache", tctx->octx->name));
+        interact = 1;
+    } else {
+        DEBUG(SSSDBG_TRACE_INTERNAL, ("User found in cache\n"));
+        /* get temporary password and cache the password */
+        ret = password_input(password_method, password_file, &password);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, ("Password input failure\n"));
+            goto end;
+        }
+
+        ret = sysdb_cache_password(tctx->sysdb, tctx->octx->name, password);
+        if (ret) {
+            DEBUG(SSSDBG_OP_FAILURE, ("Failed to cache password. (%d)[%s]\n",
+                                  ret, strerror(ret)));
+        } else {
+            goto end;
+        }
+    }
 
     /* Check domains/groups exist for user to be created */
 /*    if (groups) {
@@ -421,7 +422,17 @@ int main(int argc, const char **argv)
         }
     }
 */
-    /* password input */
+   /* interactive mode to fill in user seed info */
+   if (interact) {
+       ret = get_seed_input(tctx, &groups);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to get seed input.\n"));
+            ret = EXIT_FAILURE;
+            goto end;
+        }
+   }
+
+   /* password input */
     ret = password_input(password_method, password_file, &password);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, ("Password input failure\n"));
@@ -432,20 +443,6 @@ int main(int argc, const char **argv)
     tctx->error = sysdb_transaction_start(tctx->sysdb);
     if (tctx->error != EOK) {
         goto done;
-    }
-
-    pc_passwd = getpwnam(tctx->octx->name);
-    if (pc_passwd == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE,
-              ("getpwnam failed; user entry not found or allocation error\n"));
-    }
-
-    tctx->octx->name = pc_passwd->pw_name;
-    tctx->octx->gid = pc_passwd->pw_gid;
-
-    ret = initgroups(tctx->octx->name, tctx->octx->gid);
-    if (ret == -1) {
-        DEBUG(SSSDBG_OP_FAILURE, ("initgroups failure\n"));
     }
 
     tctx->error = sysdb_add_user(tctx->sysdb, tctx->octx->name, tctx->octx->uid,
