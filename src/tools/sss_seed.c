@@ -7,19 +7,12 @@
 #include <grp.h>
 #include <pwd.h>
 #include <sys/types.h>
-#include <pcre.h>
 
 #include "util/util.h"
 #include "db/sysdb.h"
 #include "tools/tools_util.h"
 #include "tools/sss_sync_ops.h"
 #include "confdb/confdb.h"
-
-#ifdef HAVE_LIBPCRE_LESSER_THAN_7
-#define NAME_DOMAIN_PATTERN_OPTIONS (PCRE_EXTENDED)
-#else
-#define NAME_DOMAIN_PATTERN_OPTIONS (PCRE_DUPNAMES | PCRE_EXTENDED)
-#endif
 
 #define SEED_SOURCE_LOCAL    1
 #define SEED_SOURCE_DP      2
@@ -63,16 +56,12 @@ int getstr_input(struct tools_ctx *mem_ctx, const char* request, char **_input)
         }
         ret = EOK;
 
-        //while (*_input[bytes_read] != '\0') bytes_read++;
-
         bytes_read = strlen(*_input);
-        //DEBUG(SSSDBG_TRACE_FUNC, ("input so far [%s] [%d]\n",*_input,bytes_read));
 
-        if ((char *)_input[0][bytes_read-1] == '\n') {
+        if (_input[0][bytes_read-1] == '\n') {
             _input[0][bytes_read-1] = '\0';
             break;
         }
-        //DEBUG(SSSDBG_TRACE_FUNC, ("input [%s]\n",*_input));
     }
 
     ret = EOK;
@@ -213,19 +202,15 @@ int main(int argc, const char **argv)
     char *uname = NULL;
     char *selinux_user = NULL;
     char *groups = NULL;
-    char *badgroup = NULL;
     char *domain = NULL;
     char *password = NULL;
     int password_method = PASS_PROMPT;
-    char *password_file;
+    char *password_file = NULL;
 
     struct passwd *pc_passwd = NULL;
 
     struct ldb_result *res = NULL;
 
-    const char *errstr = NULL;
-    int errval;
-    int errpos;
     int ret;
 
     struct tools_ctx *tctx = NULL;
@@ -247,6 +232,7 @@ int main(int argc, const char **argv)
         POPT_AUTOHELP
         { "debug", '\0', POPT_ARG_INT | POPT_ARGFLAG_DOC_HIDDEN, &seed_debug, 0,
          _("The debug level to run with"), NULL },
+        { "domain", 'D', POPT_ARG_STRING, &domain, 0, _("Domain"), NULL},
         { "uid",   'u', POPT_ARG_INT, &tctx->octx->uid, 0,
          _("User UID"), NULL },
         { "gid",   'g', POPT_ARG_INT, &tctx->octx->gid, 0,
@@ -341,15 +327,8 @@ int main(int argc, const char **argv)
         goto end;
     }
 
-    /* setup names context for domain parsing */
-    tctx->snctx = talloc_zero(tctx, struct sss_names_ctx);
-    if (tctx->snctx == NULL) {
-        ret = ENOMEM;
-        DEBUG(SSSDBG_CRIT_FAILURE,("Failed to allocate names context\n"));
-        goto end;
-    }
-
-    char *confdb_path = talloc_asprintf(tctx, "%s/%s", "/var/lib/sss/db",
+    /* setup confdb */
+    char *confdb_path = talloc_asprintf(tctx, "%s/%s", DB_PATH,
                                         CONFDB_FILE);
     if (confdb_path == NULL) {
         ret = ENOMEM;
@@ -373,99 +352,11 @@ int main(int argc, const char **argv)
         tctx->local = tctx->octx->domain;
     }
 
-    ret = confdb_get_string(tctx->confdb, tctx->snctx, confdb_path,
-                            CONFDB_NAME_REGEX, NULL, &tctx->snctx->re_pattern);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, ("Failed to get domain regex pattern\n"));
-    }
-
-    if (tctx->snctx->re_pattern == NULL) {
-        ret = confdb_get_string(tctx->confdb, tctx->snctx,
-                                CONFDB_MONITOR_CONF_ENTRY, CONFDB_NAME_REGEX,
-                                NULL, &tctx->snctx->re_pattern);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_OP_FAILURE,
-                  ("Failed to get domain regex from globals\n"));
-        }
-    }
-
-    if (tctx->snctx->re_pattern == NULL) {
-        tctx->snctx->re_pattern = talloc_strdup(tctx,
-                                        "(?P<name>[^@]+)@?(?P<domain>[^@]*$)");
-        if (tctx->snctx->re_pattern == NULL) {
-            ret = ENOMEM;
-            DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to allocate regex string\n"));
-            goto end;
-        }
-#ifdef HAVE_LIBPCRE_LESSER_THAN_7
-    } else {
-        DEBUG(SSSDBG_OP_FAILURE, ("This binary was build with a version of "
-                                  "libpcre that does not support non-unique "
-                                  "named subpatterns.\n"));
-        DEBUG(SSSDBG_OP_FAILURE, ("Please make sure that your pattern [%s] "
-                                  "only contains subpatterns with a unique name"
-                                  " and uses the Python syntax (?P<name>).\n",
-                                  ctx->re_pattern));
-#endif
-    }
-
-    ret = confdb_get_string(tctx->confdb, tctx->snctx, confdb_path,
-                            CONFDB_FULL_NAME_FORMAT,NULL, &tctx->snctx->fq_fmt);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, ("Failed to get fq regex\n"));
-    }
-
-    if (tctx->snctx->fq_fmt == NULL) {
-        ret = confdb_get_string(tctx->confdb, tctx->snctx,
-                                CONFDB_MONITOR_CONF_ENTRY,
-                                CONFDB_FULL_NAME_FORMAT,
-                                NULL, &tctx->snctx->fq_fmt);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  ("Failed to get fq name format from globals\n"));
-        }
-    }
-
-    if (tctx->snctx->fq_fmt == NULL) {
-        tctx->snctx->fq_fmt = talloc_strdup(tctx, "%1$s@%2$s");
-        if (tctx->snctx->fq_fmt == NULL) {
-            ret = ENOMEM;
-            DEBUG(SSSDBG_CRIT_FAILURE,("Failed to allocate fq domain regex\n"));
-            goto done;
-        }
-    }
-
-    tctx->snctx->re = pcre_compile2(tctx->snctx->re_pattern,
-                                    NAME_DOMAIN_PATTERN_OPTIONS, &errval,
-                                    &errstr, &errpos, NULL);
-    if (tctx->snctx->re == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE, ("Invalid Regular Expression pattern at "
-                                    "position %d. (ERROR: %d [%s])\n",
-                                    errpos, errval, errstr));
-        ret = EFAULT;
-        goto done;
-    }
-/*
-    ret = sss_names_init(tctx, tctx->confdb, tctx->octx->domain->name,
-                         &tctx->snctx);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, ("Could not set up parsing\n"));
-        goto end;
-    }
-*/
-    ret = sss_parse_name(tctx, tctx->snctx, uname, &domain, &tctx->octx->name);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to parse domain from username\n"));
-        ret = EXIT_FAILURE;
-        goto end;
-    }
-    DEBUG(SSSDBG_FUNC_DATA, ("Username parsed: %s\n", tctx->octx->name));
-
     if (domain) {
-        DEBUG(SSSDBG_FUNC_DATA, ("Domain parsed: %s\n", domain));
+        DEBUG(SSSDBG_FUNC_DATA, ("Domain provided: [%s]\n", domain));
     } else {
-        /* no domain specified; default to local domain */
-        domain = talloc_strdup(tctx, tctx->local->name);
+        /* no domain specified */
+        DEBUG(SSSDBG_CRIT_FAILURE, ("Domain must be specified.\n"));
     }
 
     ret = confdb_get_domain(tctx->confdb, domain, &tctx->octx->domain);
@@ -476,7 +367,7 @@ int main(int argc, const char **argv)
     }
 
     ret = sysdb_init_domain_and_sysdb(tctx, tctx->confdb, domain,
-                                      "/var/lib/sss/db", &tctx->octx->domain,
+                                      DB_PATH, &tctx->octx->domain,
                                       &tctx->sysdb);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
