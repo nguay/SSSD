@@ -124,7 +124,6 @@ int password_input(int method, char *file, char ** password)
             ret = EINVAL;
             goto done;
         }
-        //while(getline( &temp, TEMP_LEN, finput) != -1) {
         while (fgets(temp, TEMP_LEN, finput) != NULL) {
             *password = talloc_asprintf_append(*password, "%s", temp);
         }
@@ -248,12 +247,12 @@ int main(int argc, const char **argv)
         { "debug", '\0', POPT_ARG_INT | POPT_ARGFLAG_DOC_HIDDEN, &seed_debug, 0,
          _("The debug level to run with"), NULL },
         { "domain", 'D', POPT_ARG_STRING, &domain, 0, _("Domain"), NULL },
+        { "username", 'n', POPT_ARG_STRING, &tctx->octx->name, 0,
+         _("Username"), NULL},
         { "uid",   'u', POPT_ARG_INT, &tctx->octx->uid, 0,
          _("User UID"), NULL },
         { "gid",   'g', POPT_ARG_INT, &tctx->octx->gid, 0,
          _("User GID"), NULL },
-        { "username", 'n', POPT_ARG_STRING, &tctx->octx->name, 0,
-         _("Username"), NULL},
         { "gecos", 'c', POPT_ARG_STRING, &tctx->octx->gecos, 0,
          _("Comment string"), NULL},
         { "home",  'h', POPT_ARG_STRING, &tctx->octx->home, 0,
@@ -263,8 +262,6 @@ int main(int argc, const char **argv)
         { "groups", 'G', POPT_ARG_STRING, NULL, 'G', _("Groups"), NULL },
         { "interactive", 'i', POPT_ARG_NONE, NULL, 'i',
          _("Use interactive mode to enter user data"), NULL },
-        { "skel", 'k', POPT_ARG_STRING, &tctx->octx->skeldir, 0,
-         _("Specify an alternative skeleton directory"), NULL },
         { "password-file", 'p', POPT_ARG_STRING, &password_file, 0,
          _("File from which user's password is read "
            "(default is to prompt for password)"),NULL },
@@ -292,7 +289,7 @@ int main(int argc, const char **argv)
         goto done;
     }
 
-    poptSetOtherOptionHelp(pc, "[OPTIONS] -D domain username");
+    poptSetOtherOptionHelp(pc, "[OPTIONS] -D <domain> <username>");
     while ((ret = poptGetNextOpt(pc)) > 0) {
         switch (ret) {
             case 'G':
