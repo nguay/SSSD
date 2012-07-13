@@ -42,8 +42,7 @@ int getstr_input(struct tools_ctx *mem_ctx, const char* request, char **_input)
 
     talloc_set_destructor((TALLOC_CTX *)temp, password_destructor);
 
-    printf(_("Enter %1$s (%2$s):"), request,
-            (*_input != NULL) ? *_input : request );
+    printf(_("Enter %1$s:"), request);
  
     while (fgets(temp, TEMP_LEN, stdin) != NULL){
         *_input = talloc_asprintf_append(*_input, "%s", temp);
@@ -77,7 +76,7 @@ int getid_input(TALLOC_CTX *mem_ctx, const char* request, uid_t *_input)
         goto done;
     }
 
-    printf(_("Enter %1$s (%2$d):"), request, *_input);
+    printf(_("Enter %1$s:"), request);
 
     scanf("%d", _input);
 
@@ -149,42 +148,62 @@ int get_seed_input(struct tools_ctx *tctx, char **groups)
 {
     int ret = EOK;
 
-    ret = getstr_input(tctx, "username", &tctx->octx->name);
-    if (ret != EOK) {
-        goto done;
+    if (tctx->octx->name == NULL) {
+        ret = getstr_input(tctx, "username", &tctx->octx->name);
+        if (ret != EOK) {
+            goto done;
+        }
     }
 
-    ret = getid_input(tctx, "UID for user", &tctx->octx->uid);
-    if (ret != EOK) {
-        goto done;
+    if (tctx->octx->uid == 0) {
+        ret = getid_input(tctx, "UID", &tctx->octx->uid);
+        if (ret != EOK) {
+            goto done;
+        }
     }
 
-    ret = getstr_input(tctx, "user comment (gecos)", &tctx->octx->gecos);
-    if (ret != EOK) {
-        goto done;
+    if (tctx->octx->gid == 0) {
+        ret = getid_input(tctx, "GID", &tctx->octx->gid);
+        if (ret != EOK) {
+            goto done;
+        }
     }
 
-    ret = getstr_input(tctx, "home directory", &tctx->octx->home);
-    if (ret != EOK) {
-        goto done;
+    if (tctx->octx->gecos == NULL) {
+        ret = getstr_input(tctx, "user comment (gecos)", &tctx->octx->gecos);
+        if (ret != EOK) {
+            goto done;
+        }
     }
 
-    ret = getstr_input(tctx, "user login shell", &tctx->octx->shell);
-    if (ret != EOK) {
-        goto done;
+    if (tctx->octx->home == NULL) {
+        ret = getstr_input(tctx, "home directory", &tctx->octx->home);
+        if (ret != EOK) {
+            goto done;
+        }
     }
 
-    ret = getstr_input(tctx, "user groups", groups);
-    if (ret != EOK) {
-        goto done;
+    if (tctx->octx->shell == NULL) {
+        ret = getstr_input(tctx, "user login shell", &tctx->octx->shell);
+        if (ret != EOK) {
+            goto done;
+        }
     }
 
-    DEBUG(SSSDBG_TRACE_FUNC, ("username input: %s\n", tctx->octx->name));
-    DEBUG(SSSDBG_TRACE_FUNC, ("uid input: %d\n", tctx->octx->uid));
-    DEBUG(SSSDBG_TRACE_FUNC, ("gecos input: %s\n", tctx->octx->gecos));
-    DEBUG(SSSDBG_TRACE_FUNC, ("home input: %s\n", tctx->octx->home));
-    DEBUG(SSSDBG_TRACE_FUNC, ("shell input: %s\n", tctx->octx->shell));
-    DEBUG(SSSDBG_TRACE_FUNC, ("groups input: %s\n", groups));
+    if (groups == NULL) {
+        ret = getstr_input(tctx, "user groups", groups);
+        if (ret != EOK) {
+            goto done;
+        }
+    }
+
+    DEBUG(SSSDBG_TRACE_ALL, ("username input: %s\n", tctx->octx->name));
+    DEBUG(SSSDBG_TRACE_ALL, ("uid input: %d\n", tctx->octx->uid));
+    DEBUG(SSSDBG_TRACE_ALL, ("gid input: %d\n", tctx->octx->gid));
+    DEBUG(SSSDBG_TRACE_ALL, ("gecos input: %s\n", tctx->octx->gecos));
+    DEBUG(SSSDBG_TRACE_ALL, ("home input: %s\n", tctx->octx->home));
+    DEBUG(SSSDBG_TRACE_ALL, ("shell input: %s\n", tctx->octx->shell));
+    DEBUG(SSSDBG_TRACE_ALL, ("groups input: %s\n", groups));
  
 done:
     return ret;
@@ -194,9 +213,9 @@ int main(int argc, const char **argv)
 {
     int seed_debug = SSSDBG_DEFAULT;
     int interact = 0;
+    bool in_transaction = false;
 
     const char* uname = NULL;
-    char *selinux_user = NULL;
     char *groups = NULL;
     char *domain = NULL;
     char *password = NULL;
@@ -214,14 +233,14 @@ int main(int argc, const char **argv)
     if (tctx == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, ("Could not allocate tools context\n"));
         ret = ENOMEM;
-        goto end;
+        goto done;
     }
 
     tctx->octx = talloc_zero(tctx, struct ops_ctx);
     if (tctx->octx == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, ("Could not allocate data context\n"));
         ret = ENOMEM;
-        goto end;
+        goto done;
     }
 
     struct poptOption options[] = {
@@ -246,8 +265,6 @@ int main(int argc, const char **argv)
          _("Use interactive mode to enter user data"), NULL },
         { "skel", 'k', POPT_ARG_STRING, &tctx->octx->skeldir, 0,
          _("Specify an alternative skeleton directory"), NULL },
-        { "selinux-user", 'Z', POPT_ARG_STRING, &selinux_user, 0,
-         _("The SELinux user for user's login"), NULL },
         { "password-file", 'p', POPT_ARG_STRING, &password_file, 0,
          _("File from which user's password is read "
            "(default is to prompt for password)"),NULL },
@@ -264,7 +281,7 @@ int main(int argc, const char **argv)
                                     ret, strerror(ret)));
         ERROR("Error setting the locale\n");
         ret = EXIT_FAILURE;
-        goto end;
+        goto done;
     }
 
     /* parse arguments */
@@ -272,7 +289,7 @@ int main(int argc, const char **argv)
     if (argc < 2) {
         poptPrintUsage(pc,stderr,0);
         ret = EXIT_FAILURE;
-        goto end;
+        goto done;
     }
 
     poptSetOtherOptionHelp(pc, "[OPTIONS] -D domain username");
@@ -282,7 +299,7 @@ int main(int argc, const char **argv)
                 groups = poptGetOptArg(pc);
                 if (!groups) {
                     BAD_POPT_PARAMS(pc, _("Specify group to add user to\n"),
-                                          ret, end);
+                                          ret, done);
                 }
                 break;
             case 'i':
@@ -291,22 +308,22 @@ int main(int argc, const char **argv)
                 break;
         }
     }
-PA
+
     if (ret != -1) {
-        BAD_POPT_PARAMS(pc, poptStrerror(ret), ret, end);
+        BAD_POPT_PARAMS(pc, poptStrerror(ret), ret, done);
     }
 
     /* username is standalone argument */
     uname = poptGetArg(pc);
-    if (uname == NULL) {
-        BAD_POPT_PARAMS(pc, _("Username must be specified\n"), ret, end);
-    }
-
-    tctx->octx->name = talloc_strdup(tctx,uname);
-    if (tctx->octx->name == NULL) {
-        ret = ENOMEM;
-        DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to allocate username\n"));
-        goto end;
+    if (uname == NULL && tctx->octx->name == NULL) {
+        BAD_POPT_PARAMS(pc, _("Username must be specified\n"), ret, done);
+    } else if (uname != NULL) {
+        tctx->octx->name = talloc_strdup(tctx,uname);
+        if (tctx->octx->name == NULL) {
+            ret = ENOMEM;
+            DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to allocate username\n"));
+            goto done;
+        }
     }
 
     /* check if root */
@@ -315,7 +332,7 @@ PA
         DEBUG(SSSDBG_CRIT_FAILURE,
               ("Running under uid %d, must be root\n", ret));
         ret = EXIT_FAILURE;
-        goto end;
+        goto done;
     }
 
     /* getpwnam and initgroups */
@@ -326,6 +343,10 @@ PA
     } else {
         tctx->octx->name = pc_passwd->pw_name;
         tctx->octx->gid = pc_passwd->pw_gid;
+        tctx->octx->uid = pc_passwd->pw_uid;
+        tctx->octx->gecos = pc_passwd->pw_gecos;
+        tctx->octx->home = pc_passwd->pw_dir;
+        tctx->octx->shell = pc_passwd->pw_shell;
 
         ret = initgroups(tctx->octx->name, tctx->octx->gid);
         if (ret == -1) {
@@ -339,22 +360,23 @@ PA
                                         CONFDB_FILE);
     if (confdb_path == NULL) {
         ret = ENOMEM;
-        goto end;
+        goto done;
     }
 
     ret = confdb_init(tctx, &tctx->confdb, confdb_path);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               ("Could not inittialize connection to the confdb\n"));
-        goto end;
+        goto done;
     }
 
     /* set up domain and sysdb */
     if (domain) {
         DEBUG(SSSDBG_FUNC_DATA, ("Domain provided: [%s]\n", domain));
     } else {
-        /* no domain specified */
         DEBUG(SSSDBG_CRIT_FAILURE, ("Domain must be specified.\n"));
+        ret = EINVAL;
+        goto done;
     }
 
     ret = confdb_get_domain(tctx->confdb, domain, &tctx->octx->domain);
@@ -370,7 +392,7 @@ PA
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               ("Could not initialize connection to the sysdb\n"));
-        goto end;
+        goto done;
     }
 
     /* look for user in cache */
@@ -379,7 +401,7 @@ PA
         DEBUG(SSSDBG_CRIT_FAILURE,
               ("Couldn't lookup user (%s) in the cache", tctx->octx->name));
         ret = EXIT_FAILURE;
-        goto end;
+        goto done;
     }
 
     if (res->count == 0) {
@@ -392,7 +414,7 @@ PA
         ret = password_input(password_method, password_file, &password);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE, ("Password input failure\n"));
-            goto end;
+            goto done;
         }
 
         ret = sysdb_cache_password(tctx->sysdb, tctx->octx->name, password);
@@ -400,7 +422,7 @@ PA
             DEBUG(SSSDBG_OP_FAILURE, ("Failed to cache password. (%d)[%s]\n",
                                   ret, strerror(ret)));
         } else {
-            goto end;
+            goto done;
         }
     }
 
@@ -412,7 +434,7 @@ PA
                   ("Cannot parse groups to add the user to\n"));
             ERROR("Internal error while parsing parameters\n");
             ret = EXIT_FAILURE;
-            goto end;
+            goto done;
         }
 
         ret = parse_group_name_domain(tctx, tctx->octx->addgroups);
@@ -421,7 +443,7 @@ PA
                   ("Cannot parse FQDN groups to add user to"));
             ERROR("Groups must be in the same domain as user\n");
             ret = EXIT_FAILURE;
-            goto end;
+            goto done;
         }
 */
         /* if local source check LOCAL domain for group names */
@@ -430,7 +452,7 @@ PA
             if (ret != EOK) {
                 ERROR("Cannot find group %1$s in local domain\n", badgroup);
                 ret = EXIT_FAILURE;
-                goto end;
+                goto done;
             }
         }
     }
@@ -441,7 +463,7 @@ PA
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to get seed input.\n"));
             ret = EXIT_FAILURE;
-            goto end;
+            goto done;
         }
    }
 
@@ -449,7 +471,7 @@ PA
     ret = password_input(password_method, password_file, &password);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, ("Password input failure\n"));
-        goto end;
+        goto done;
     }
 
     /* Add user to sysdb and check user was added to cache */
@@ -457,6 +479,8 @@ PA
     if (tctx->error != EOK) {
         goto done;
     }
+
+    in_transaction = true;
 
     tctx->error = sysdb_add_user(tctx->sysdb, tctx->octx->name, tctx->octx->uid,
                                  tctx->octx->gid, tctx->octx->gecos,
@@ -479,60 +503,36 @@ PA
         goto done;
     }
 
+    in_transaction = false;
+
+    /* check user was added to the cache */
     ret = sysdb_getpwnam(tctx, tctx->sysdb, tctx->octx->name, &res);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               ("Couldn't lookup user (%s) in the cache", tctx->octx->name));
         ret = EXIT_FAILURE;
-        goto end;
+        goto done;
     }
 
     if (res->count == 0) {
         DEBUG(SSSDBG_TRACE_INTERNAL,
                  ("User (%1$s) wasn't found in the cache", tctx->octx->name));
         ret = EXIT_FAILURE;
-        goto end;
+        goto done;
     } else {
         DEBUG(SSSDBG_TRACE_INTERNAL, ("User found in cache\n"));
     }
 
-/* sysdb_initgroups
-
-    ret = sysdb_initgroups(tctx, tctx->sysdb, pc_username, &res);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, ("sysdb_initgroups failed\n"));
-        ERROR("User couldn't be added to cache\n");
-        ret = EXIT_FAILURE;
-        goto end;
-    } else {
-       ret = sysdb_transaction_commit(tctx->sysdb);
-       if (ret != EOK) {
-       }
-
-       ret = sysdb_getpwnam(tctx, tctx->sysdb, pc_username, &res);
-       if (ret != EOK) {
-           DEBUG(SSSDBG_CRIT_FAILURE,
-                 ("Couldn't lookup user (%1$s) in the cache\n", pc_username));
-           ret = EXIT_FAILURE;
-           goto end;
-       }
-
-       if (res->count == 0) {
-           DEBUG(SSSDBG_TRACE_INTERNAL,
-                 ("User (%1$s) wasn't found in the cache", pc_username));
-           ret = EXIT_FAILURE;
-           goto end;
-       } else {
-          DEBUG(SSSDBG_TRACE_INTERNAL, ("User verified in cache\n"));
-       }
-    }
-
-*/
-
-done:
     ret = EXIT_SUCCESS;
 
-end:
+done:
+    if (in_transaction) {
+        ret = sysdb_transaction_cancel(tctx->sysdb);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, ("Failed to cancel transaction\n"));
+        }
+    }
+
     poptFreeContext(pc);
     talloc_free(tctx);
     exit(ret);
