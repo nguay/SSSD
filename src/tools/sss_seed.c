@@ -20,7 +20,7 @@
 #ifndef TEMP_LEN
 #define TEMP_LEN 10
 
-int getstr_input(struct tools_ctx *mem_ctx, const char* request, char **_input)
+int seed_str_input(struct tools_ctx *mem_ctx, const char* req, char **_input)
 {
     int ret = EOK;
     TALLOC_CTX *temp_ctx = NULL;
@@ -33,16 +33,15 @@ int getstr_input(struct tools_ctx *mem_ctx, const char* request, char **_input)
         goto done;
     }
  
-    temp = talloc_array(temp_ctx, char, TEMP_LEN);
+    temp = talloc_zero_array(temp_ctx, char, TEMP_LEN);
     if (temp == NULL) {
         ret = ENOMEM;
         goto done;
     }
-    temp[0] = '\0';
 
     talloc_set_destructor((TALLOC_CTX *)temp, password_destructor);
 
-    printf(_("Enter %1$s:"), request);
+    printf(_("Enter %1$s:"), req);
  
     while (fgets(temp, TEMP_LEN, stdin) != NULL){
         *_input = talloc_asprintf_append(*_input, "%s", temp);
@@ -50,12 +49,11 @@ int getstr_input(struct tools_ctx *mem_ctx, const char* request, char **_input)
             ret = ENOMEM;
             goto done;
         }
-        ret = EOK;
 
         bytes_read = strlen(*_input);
 
-        if (_input[0][bytes_read-1] == '\n') {
-            _input[0][bytes_read-1] = '\0';
+        if ((*_input)[bytes_read-1] == '\n') {
+            (*_input)[bytes_read-1] = '\0';
             break;
         }
     }
@@ -67,7 +65,7 @@ done:
     return ret;
 }
 
-int getid_input(TALLOC_CTX *mem_ctx, const char* request, uid_t *_input)
+int seed_id_input(TALLOC_CTX *mem_ctx, const char* req, uid_t *_input)
 {
     int ret = EOK;
     TALLOC_CTX *temp_ctx = talloc_new(NULL);
@@ -76,7 +74,7 @@ int getid_input(TALLOC_CTX *mem_ctx, const char* request, uid_t *_input)
         goto done;
     }
 
-    printf(_("Enter %1$s:"), request);
+    printf(_("Enter %1$s:"), req);
 
     scanf("%d", _input);
 
@@ -90,11 +88,8 @@ done:
     return ret;
 }
 
-/*
- * get password from:
- *     file, or prompt for it
- */
-int password_input(int method, char *file, char ** password)
+/* read password from file, or prompt for it */
+int password_input(int method, char *filename, char ** password)
 {
     char* temp = NULL;
     int ret = EOK;
@@ -103,7 +98,7 @@ int password_input(int method, char *file, char ** password)
 
     temp_ctx = talloc_new(NULL);
     if (temp_ctx == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE, ("Could not allocate temp password context\n"));
+        DEBUG(SSSDBG_CRIT_FAILURE, ("Could not allocate temp context\n"));
         ret = ENOMEM;
         goto done;
     }
@@ -118,22 +113,29 @@ int password_input(int method, char *file, char ** password)
     talloc_set_destructor((TALLOC_CTX *)temp, password_destructor);
 
     if (method == PASS_FILE) {
-        finput = fopen(file, "r");
+        finput = fopen(filename, "r");
         if (finput == NULL) {
-            DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to open file for password\n"));
+            DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to open file [%s] for "
+                                        "password\n", filename));
             ret = EINVAL;
             goto done;
         }
+
         while (fgets(temp, TEMP_LEN, finput) != NULL) {
             *password = talloc_asprintf_append(*password, "%s", temp);
+            if (*password == NULL) {
+                DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to allocate password\n"));
+                ret = ENOMEM;
+                goto done;
+            }
         }
-    }
-
-    *password = getpass("Password: ");
-    if (*password == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to get password from prompt\n"));
-        ret = EINVAL;
-        goto done;
+    } else {
+        *password = getpass("Enter password: ");
+        if (*password == NULL) {
+            DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to get prompted password\n"));
+            ret = EINVAL;
+            goto done;
+        }
     }
 
 done:
@@ -148,62 +150,54 @@ int get_seed_input(struct tools_ctx *tctx, char **groups)
     int ret = EOK;
 
     if (tctx->octx->name == NULL) {
-        ret = getstr_input(tctx, "username", &tctx->octx->name);
+        ret = seed_str_input(tctx, "username", &tctx->octx->name);
         if (ret != EOK) {
             goto done;
         }
     }
 
     if (tctx->octx->uid == 0) {
-        ret = getid_input(tctx, "UID", &tctx->octx->uid);
+        ret = seed_id_input(tctx, "UID", &tctx->octx->uid);
         if (ret != EOK) {
             goto done;
         }
     }
 
     if (tctx->octx->gid == 0) {
-        ret = getid_input(tctx, "GID", &tctx->octx->gid);
+        ret = seed_id_input(tctx, "GID", &tctx->octx->gid);
         if (ret != EOK) {
             goto done;
         }
     }
 
     if (tctx->octx->gecos == NULL) {
-        ret = getstr_input(tctx, "user comment (gecos)", &tctx->octx->gecos);
+        ret = seed_str_input(tctx, "user comment (gecos)", &tctx->octx->gecos);
         if (ret != EOK) {
             goto done;
         }
     }
 
     if (tctx->octx->home == NULL) {
-        ret = getstr_input(tctx, "home directory", &tctx->octx->home);
+        ret = seed_str_input(tctx, "home directory", &tctx->octx->home);
         if (ret != EOK) {
             goto done;
         }
     }
 
     if (tctx->octx->shell == NULL) {
-        ret = getstr_input(tctx, "user login shell", &tctx->octx->shell);
+        ret = seed_str_input(tctx, "user login shell", &tctx->octx->shell);
         if (ret != EOK) {
             goto done;
         }
     }
 
-    if (groups == NULL) {
-        ret = getstr_input(tctx, "user groups", groups);
+    if (*groups == NULL) {
+        ret = seed_str_input(tctx, "user groups", groups);
         if (ret != EOK) {
             goto done;
         }
     }
 
-    DEBUG(SSSDBG_TRACE_ALL, ("username input: %s\n", tctx->octx->name));
-    DEBUG(SSSDBG_TRACE_ALL, ("uid input: %d\n", tctx->octx->uid));
-    DEBUG(SSSDBG_TRACE_ALL, ("gid input: %d\n", tctx->octx->gid));
-    DEBUG(SSSDBG_TRACE_ALL, ("gecos input: %s\n", tctx->octx->gecos));
-    DEBUG(SSSDBG_TRACE_ALL, ("home input: %s\n", tctx->octx->home));
-    DEBUG(SSSDBG_TRACE_ALL, ("shell input: %s\n", tctx->octx->shell));
-    DEBUG(SSSDBG_TRACE_ALL, ("groups input: %s\n", groups));
- 
 done:
     return ret;
 }
@@ -213,16 +207,14 @@ int main(int argc, const char **argv)
     int seed_debug = SSSDBG_DEFAULT;
     int interact = 0;
     bool in_transaction = false;
-
     const char* uname = NULL;
     char *groups = NULL;
+    char *badgroup = NULL;
     char *domain = NULL;
     char *password = NULL;
     int password_method = PASS_PROMPT;
     char *password_file = NULL;
-
     struct passwd *pc_passwd = NULL;
-
     struct ldb_result *res = NULL;
 
     int ret;
@@ -323,6 +315,11 @@ int main(int argc, const char **argv)
         }
     }
 
+    /* check if passwordfile was provided */
+    if (password_file != NULL) {
+        password_method = PASS_FILE;
+    }
+
     /* check if root */
     ret = getuid();
     if (ret != 0) {
@@ -403,11 +400,11 @@ int main(int argc, const char **argv)
 
     if (res->count == 0) {
         DEBUG(SSSDBG_TRACE_INTERNAL,
-                 ("User (%1$s) wasn't found in the cache", tctx->octx->name));
+                 ("User (%s) wasn't found in the cache\n", tctx->octx->name));
         interact = 1;
     } else {
         DEBUG(SSSDBG_TRACE_INTERNAL, ("User found in cache\n"));
-        /* get temporary password and cache the password */
+        /* get temporary password and cache the password if user is cached*/
         ret = password_input(password_method, password_file, &password);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE, ("Password input failure\n"));
@@ -423,8 +420,24 @@ int main(int argc, const char **argv)
         }
     }
 
+    /* interactive mode to fill in user seed info */
+    if (interact) {
+        ret = get_seed_input(tctx, &groups);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to get seed input.\n"));
+            ret = EXIT_FAILURE;
+            goto done;
+        }
+    }
+
     /* Check domains/groups exist for user to be created */
-/*    if (groups) {
+    if (groups) {
+        ret = sss_names_init(tctx, tctx->confdb, domain, &tctx->snctx);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to init names context\n"));
+            goto done;
+        }
+
         ret = parse_groups(tctx, groups, &tctx->octx->addgroups);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE,
@@ -442,36 +455,24 @@ int main(int argc, const char **argv)
             ret = EXIT_FAILURE;
             goto done;
         }
-*/
-        /* if local source check LOCAL domain for group names */
-/*        if (seed_source == SEED_SOURCE_LOCAL) {
-            ret = check_group_names(tctx, tctx->octx->addgroups, &badgroup);
-            if (ret != EOK) {
-                ERROR("Cannot find group %1$s in local domain\n", badgroup);
-                ret = EXIT_FAILURE;
-                goto done;
-            }
-        }
-    }
-*/
-   /* interactive mode to fill in user seed info */
-   if (interact) {
-       ret = get_seed_input(tctx, &groups);
+
+        ret = check_group_names(tctx, tctx->octx->addgroups, &badgroup);
         if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to get seed input.\n"));
+            DEBUG(SSSDBG_OP_FAILURE, ("Cannot find group %s in domain\n",
+                                      badgroup));
             ret = EXIT_FAILURE;
             goto done;
         }
-   }
+    }
 
-   /* password input */
+    /* password input */
     ret = password_input(password_method, password_file, &password);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, ("Password input failure\n"));
         goto done;
     }
 
-    /* Add user to sysdb and check user was added to cache */
+    /* Add user info and password to sysdb cache */
     tctx->error = sysdb_transaction_start(tctx->sysdb);
     if (tctx->error != EOK) {
         goto done;
@@ -506,14 +507,14 @@ int main(int argc, const char **argv)
     ret = sysdb_getpwnam(tctx, tctx->sysdb, tctx->octx->name, &res);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
-              ("Couldn't lookup user (%s) in the cache", tctx->octx->name));
+              ("Couldn't lookup user (%s) in the cache\n", tctx->octx->name));
         ret = EXIT_FAILURE;
         goto done;
     }
 
     if (res->count == 0) {
         DEBUG(SSSDBG_TRACE_INTERNAL,
-                 ("User (%1$s) wasn't found in the cache", tctx->octx->name));
+                 ("User (%1$s) wasn't found in the cache\n", tctx->octx->name));
         ret = EXIT_FAILURE;
         goto done;
     } else {
