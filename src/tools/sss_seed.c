@@ -12,10 +12,6 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <ctype.h>
-<<<<<<< HEAD
-#include <time.h>
-=======
->>>>>>> seed_patch
 
 #include "util/util.h"
 #include "db/sysdb.h"
@@ -519,11 +515,7 @@ int main(int argc, const char **argv)
         }
     }
 
-<<<<<<< HEAD
-    /* set up confdb/sysdb/domain */
-=======
     /* set up confdb,sysdb and domain */
->>>>>>> seed_patch
     ret = seed_init_db(tctx, domain,  &tctx->confdb, &tctx->sysdb,
                        &tctx->octx->domain);
     if (ret != EOK) {
@@ -554,11 +546,7 @@ int main(int argc, const char **argv)
         goto done;
     }
 
-<<<<<<< HEAD
-    /* interactive mode to fill in user seed info */
-=======
     /* interactive mode to fill in user information */
->>>>>>> seed_patch
     if (interact == true && user_cached == false) {
         ret = seed_interactive_input(tctx, &groups);
         if (ret != EOK) {
