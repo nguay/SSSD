@@ -24,10 +24,40 @@ enum seed_pass_method {
     PASS_FILE
 };
 
-enum seed_input_type {
-    STR_INPUT,
-    ID_INPUT
-};
+int seed_prompt(const char *req)
+{
+    TALLOC_CTX *temp_ctx = NULL;
+    size_t len = 0;
+    size_t index = 0;
+    char *prompt = NULL;
+    int ret = EOK;
+
+    temp_ctx = talloc_new(NULL);
+    if (temp_ctx == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    if ((prompt = talloc_asprintf(temp_ctx, _("Enter %s:"), req)) == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    while (prompt[index] != '\0') {
+       errno = 0;
+       len = sss_atomic_write_s(STDOUT_FILENO, &prompt[index++], 1);
+       if (len == -1) {
+           ret = errno;
+           DEBUG(SSSDBG_CRIT_FAILURE, ("write failed [%d][%s].\n",
+                                       ret, strerror(ret)));
+           goto done;
+       }
+    }
+
+done:
+    talloc_free(temp_ctx);
+    return ret;
+}
 
 #ifndef BUFSIZE
 #define BUFSIZE 1024
@@ -39,6 +69,7 @@ int seed_str_input(TALLOC_CTX *mem_ctx,
     TALLOC_CTX *temp_ctx = NULL;
     char buf[BUFSIZE+1];
     size_t len = 0;
+    size_t bytes_read = 0;
     int ret = EOK;
 
     temp_ctx = talloc_new(NULL);
@@ -47,20 +78,25 @@ int seed_str_input(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    errno = 0;
-    len = sss_atomic_read_s(STDIN_FILENO, buf, BUFSIZE);
-    if (len == -1) {
-        ret = errno;
-        DEBUG(SSSDBG_CRIT_FAILURE, ("read failed [%d][%s].\n",
-                                    ret, strerror(ret)));
+    ret = seed_prompt(req);
+    if (ret != EOK) {
         goto done;
     }
 
-    if (len == BUFSIZE) {
-        DEBUG(SSSDBG_TRACE_FUNC, ("input may exceed allowed buffer size\n"));
+    errno = 0;
+    while ((bytes_read = sss_atomic_read_s(STDIN_FILENO, buf+len, 1)) != 0) {
+        if (bytes_read == -1) {
+            ret = errno;
+            DEBUG(SSSDBG_CRIT_FAILURE, ("read failed [%d][%s].\n",
+                                        ret, strerror(ret)));
+            goto done;
+        }
+        if (buf[len] == '\n' || len == BUFSIZE) {
+            buf[len] = '\0';
+            break;
+        }
+        len += bytes_read;
     }
-
-    buf[len] = '\0';
 
     *_input = talloc_strdup(temp_ctx, buf);
     if (*_input == NULL) {
@@ -83,6 +119,7 @@ int seed_id_input(TALLOC_CTX *mem_ctx,
     TALLOC_CTX *temp_ctx = NULL;
     char buf[BUFSIZE+1];
     size_t len = 0;
+    size_t bytes_read = 0;
     char *endptr = NULL;
     int ret = EOK;
 
@@ -92,18 +129,29 @@ int seed_id_input(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    errno = 0;
-    len = sss_atomic_read_s(STDIN_FILENO, buf, BUFSIZE);
-    if (len == -1) {
-        ret = errno;
-        DEBUG(SSSDBG_CRIT_FAILURE, ("read failed [%d][%s].\n",
-                                    ret, strerror(ret)));
+    ret = seed_prompt(req);
+    if (ret != EOK) {
         goto done;
+    }
+
+    errno = 0;
+    while ((bytes_read = sss_atomic_read_s(STDIN_FILENO, buf+len, 1)) != 0) {
+        if (bytes_read == -1) {
+            ret = errno;
+            DEBUG(SSSDBG_CRIT_FAILURE, ("read failed [%d][%s].\n",
+                                        ret, strerror(ret)));
+            goto done;
+        }
+        if (buf[len] == '\n' || len == BUFSIZE) {
+            buf[len] = '\0';
+            break;
+        }
+        len += bytes_read;
     }
 
     if (isdigit(*buf)) {
         errno = 0;
-        *_id_input = (uid_t)strtoll((char *)buf, &endptr, 10);
+        *_id_input = (uid_t)strtoll(buf, &endptr, 10);
         if (errno != 0) {
             ret = errno;
             DEBUG(SSSDBG_OP_FAILURE, ("strtoll failed on [%s]: [%d][%s].\n",
@@ -112,7 +160,7 @@ int seed_id_input(TALLOC_CTX *mem_ctx,
         }
         if (*endptr != '\0') {
             DEBUG(SSSDBG_MINOR_FAILURE, ("extra characters [%s] after "
-                                         "UID [%d]\n", endptr, *_id_input));
+                                         "ID [%d]\n", endptr, *_id_input));
         }
     } else {
         ret = EINVAL;
@@ -156,7 +204,6 @@ int seed_password_input(TALLOC_CTX *mem_ctx,
             ret = EINVAL;
             goto done;
         }
-        DEBUG(SSSDBG_TRACE_ALL,("pass_max = PASS_MAX"));
 
         errno = 0;
         len = sss_atomic_read_s(fd, buf, PASS_MAX);
@@ -168,7 +215,15 @@ int seed_password_input(TALLOC_CTX *mem_ctx,
             close(fd);
             goto done;
         }
+
         close(fd);
+        buf[len] = '\0';
+
+        *password = talloc_strdup(temp_ctx, (char *)buf);
+        if (*password == NULL) {
+            ret = ENOMEM;
+            goto done;
+        }
 
    } else {
         temp = getpass("Enter temporary password:");
@@ -208,49 +263,49 @@ int seed_interactive_input(struct tools_ctx *tctx, char **groups)
     int ret = EOK;
 
     if (tctx->octx->name == NULL) {
-        ret = seed_str_input(tctx, "username", &tctx->octx->name);
+        ret = seed_str_input(tctx, _("username"), &tctx->octx->name);
         if (ret != EOK) {
             goto done;
         }
     }
 
     if (tctx->octx->uid == 0) {
-        ret = seed_id_input(tctx, "UID", &tctx->octx->uid);
+        ret = seed_id_input(tctx, _("UID"), &tctx->octx->uid);
         if (ret != EOK) {
             goto done;
         }
     }
 
     if (tctx->octx->gid == 0) {
-        ret = seed_id_input(tctx, "GID", &tctx->octx->gid);
+        ret = seed_id_input(tctx, _("GID"), &tctx->octx->gid);
         if (ret != EOK) {
             goto done;
         }
     }
 
     if (tctx->octx->gecos == NULL) {
-        ret = seed_str_input(tctx, "user comment (gecos)", &tctx->octx->gecos);
+        ret = seed_str_input(tctx, _("user comment (gecos)"), &tctx->octx->gecos);
         if (ret != EOK) {
             goto done;
         }
     }
 
     if (tctx->octx->home == NULL) {
-        ret = seed_str_input(tctx, "home directory", &tctx->octx->home);
+        ret = seed_str_input(tctx, _("home directory"), &tctx->octx->home);
         if (ret != EOK) {
             goto done;
         }
     }
 
     if (tctx->octx->shell == NULL) {
-        ret = seed_str_input(tctx, "user login shell", &tctx->octx->shell);
+        ret = seed_str_input(tctx, _("user login shell"), &tctx->octx->shell);
         if (ret != EOK) {
             goto done;
         }
     }
 
     if (*groups == NULL) {
-        ret = seed_str_input(tctx, "user groups", groups);
+        ret = seed_str_input(tctx, _("user groups"), groups);
         if (ret != EOK) {
             goto done;
         }
@@ -324,6 +379,68 @@ done:
     return ret;
 }
 
+int seed_dom_user_info(TALLOC_CTX *mem_ctx,
+                       char *name,
+                       struct ops_ctx *octx)
+{
+    TALLOC_CTX *temp_ctx = NULL;
+    struct passwd *passwd = NULL;
+    int ret = EOK;
+
+    temp_ctx = talloc_new(NULL);
+    if (temp_ctx == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    passwd = getpwnam(name);
+    if (passwd == NULL) {
+        DEBUG(SSSDBG_MINOR_FAILURE,
+              ("getpwnam failed; user entry not found\n"));
+        goto done;
+    }
+    octx->gid = passwd->pw_gid;
+    octx->uid = passwd->pw_uid;
+    octx->name = talloc_strdup(temp_ctx, passwd->pw_name);
+    if (octx->name == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+    octx->gecos = talloc_strdup(temp_ctx, passwd->pw_gecos);
+    if (octx->gecos == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+    octx->home = talloc_strdup(temp_ctx, passwd->pw_dir);
+    if (octx->home == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+    octx->shell = talloc_strdup(temp_ctx, passwd->pw_shell);
+    if (octx->shell == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = initgroups(name, octx->gid);
+    if (ret == -1) {
+        DEBUG(SSSDBG_MINOR_FAILURE, ("initgroups failure\n"));
+        goto done;
+    }
+
+    octx->name = talloc_steal(mem_ctx, octx->name);
+    octx->gecos = talloc_steal(mem_ctx, octx->gecos);
+    octx->home = talloc_steal(mem_ctx, octx->home);
+    octx->shell = talloc_steal(mem_ctx, octx->shell);
+
+done:
+    if (ret == ENOMEM) {
+        DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to allocate user information\n"));
+    }
+    talloc_free(temp_ctx);
+    return ret;
+}
+
 int seed_check_groups(struct tools_ctx *tctx,
                       char *groups,
                       char **badgroup)
@@ -367,7 +484,7 @@ done:
 
 int main(int argc, const char **argv)
 {
-    int seed_debug = SSSDBG_DEFAULT;
+    int seed_debug = 0xfff0;
     bool interact = false;
     bool in_transaction = false;
     bool user_cached = false;
@@ -378,7 +495,6 @@ int main(int argc, const char **argv)
     char *password = NULL;
     enum seed_pass_method password_method = PASS_PROMPT;
     char *password_file = NULL;
-    struct passwd *pc_passwd = NULL;
     struct ldb_result *res = NULL;
 
     int ret;
@@ -497,22 +613,10 @@ int main(int argc, const char **argv)
     }
 
     /* get user info from domain */
-    pc_passwd = getpwnam(tctx->octx->name);
-    if (pc_passwd == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE,
-              ("getpwnam failed; user entry not found or allocation error\n"));
-    } else {
-        tctx->octx->name = pc_passwd->pw_name;
-        tctx->octx->gid = pc_passwd->pw_gid;
-        tctx->octx->uid = pc_passwd->pw_uid;
-        tctx->octx->gecos = pc_passwd->pw_gecos;
-        tctx->octx->home = pc_passwd->pw_dir;
-        tctx->octx->shell = pc_passwd->pw_shell;
-
-        ret = initgroups(tctx->octx->name, tctx->octx->gid);
-        if (ret == -1) {
-            DEBUG(SSSDBG_OP_FAILURE, ("initgroups failure\n"));
-        }
+    ret = seed_dom_user_info(tctx, tctx->octx->name, tctx->octx);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, ("Failed lookup of user [%s] in domain [%s]",
+                                  tctx->octx->name, domain));
     }
 
     /* set up confdb,sysdb and domain */
@@ -547,18 +651,20 @@ int main(int argc, const char **argv)
     }
 
     /* interactive mode to fill in user information */
-    if (interact == true && user_cached == false) {
-        ret = seed_interactive_input(tctx, &groups);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to get seed input.\n"));
-            ret = EXIT_FAILURE;
-            goto done;
-        }
-    } else if (tctx->octx->uid == 0 || tctx->octx->gid == 0) {
+    if (user_cached == false) {
+        if (interact == true) {
+            ret = seed_interactive_input(tctx, &groups);
+            if (ret != EOK) {
+                DEBUG(SSSDBG_CRIT_FAILURE, ("Failed to get seed input.\n"));
+                ret = EXIT_FAILURE;
+                goto done;
+            }
+        } else if (tctx->octx->uid == 0 || tctx->octx->gid == 0) {
             /* require username, UID, and GID to continue */
             DEBUG(SSSDBG_MINOR_FAILURE, ("Not enough information provided\n"));
             ret = EXIT_FAILURE;
             goto done;
+        }
     }
 
     /* Check domains/groups exist for user to be created */
@@ -592,6 +698,7 @@ int main(int argc, const char **argv)
                                      tctx->octx->shell, NULL, 0, 0);
         if (tctx->error) {
             DEBUG(SSSDBG_OP_FAILURE, ("Failed to add user to the cache\n"));
+            fprintf(stderr, _("Failed to create user cache entry\n"));
             goto done;
         }
     }
