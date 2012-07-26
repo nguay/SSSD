@@ -103,7 +103,7 @@
                     <para>
                         Any text string describing the user. Often used as
                         the field for the user's full name.
-                    <\para>
+                    </para>
                 </listitem>
             </varlistentry>
             <varlistentry>
@@ -115,7 +115,7 @@
                     <para>
                         Set the home directory of the user to
                         <replaceable>HOME_DIR</replaceable>.
-                    <\para>
+                    </para>
                 </listitem>
             </varlistentry>
             <varlistentry>
@@ -127,7 +127,7 @@
                     <para>
                         Set the login shell of the user to
                         <replaceable>SHELL</replaceable>.
-                    <\para>
+                    </para>
                 </listitem>
             </varlistentry>
             <varlistentry>
