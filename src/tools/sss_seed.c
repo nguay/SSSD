@@ -366,8 +366,7 @@ static int seed_init(const int argc,
                      struct seed_ctx **_sctx)
 {
     TALLOC_CTX *tmp_ctx = NULL;
-
-    int pc_debug = 0xfff0;
+    int pc_debug = SSSDBG_DEFAULT;
     const char *pc_domain = NULL;
     const char *pc_name = NULL;
     const char *temp_name = NULL;
@@ -712,7 +711,6 @@ static int seed_check_groups(struct seed_ctx *sctx, char *groups)
                  if (strcmp(domain,sctx->uctx->domain_name) != 0) {
                      return EINVAL;
                  }
-                 
                  /* only use groupname */
                  talloc_zfree(sctx->uctx->addgroups[i]);
                  sctx->uctx->addgroups[i] = talloc_strdup(sctx, name);
@@ -818,7 +816,6 @@ int main(int argc, const char **argv)
                                  ret, strerror(ret)));
         goto done;
     }
-
 
     /* get user info from domain */
     ret = seed_dom_user_info(sctx, sctx->uctx->name, sctx->uctx);
